@@ -1,6 +1,6 @@
 {
   "name": "buffer-analysis-engine",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Lightweight, dependency-free buffer analysis engine for file content inspection",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
