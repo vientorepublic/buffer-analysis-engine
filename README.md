@@ -1,5 +1,10 @@
 # Buffer Analysis Engine
 
+[![License](https://img.shields.io/badge/License-MIT-blue)](#license)
+[![stars - buffer-analysis-engine](https://img.shields.io/github/stars/vientorepublic/buffer-analysis-engine?style=social)](https://github.com/vientorepublic/buffer-analysis-engine)
+[![forks - buffer-analysis-engine](https://img.shields.io/github/forks/vientorepublic/buffer-analysis-engine?style=social)](https://github.com/vientorepublic/buffer-analysis-engine)
+[![npm version](https://badge.fury.io/js/buffer-analysis-engine.svg)](https://badge.fury.io/js/buffer-analysis-engine)
+
 Lightweight, dependency-free buffer analysis engine for detecting MIME types (magic bytes) and quick heuristic suspicious-patterns in buffers.
 
 ---
@@ -32,17 +37,17 @@ import {
   getBufferAnalysisEngine,
   resetBufferAnalysisEngine,
   MAGIC_BYTES_SIGNATURES,
-} from "buffer-analysis-engine";
+} from 'buffer-analysis-engine';
 
 const engine = new BufferAnalysisEngine();
 const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
 
 // instance API
-const result = engine.analyzeBuffer(buf, "photo.jpg");
+const result = engine.analyzeBuffer(buf, 'photo.jpg');
 console.log(result.detectedMimeType); // "image/jpeg"
 
 // convenience: per-call config uses a temporary engine and thus respects the supplied options
-const oneOff = analyzeBuffer(buf, "photo.jpg", { enableMagicBytesDetection: true });
+const oneOff = analyzeBuffer(buf, 'photo.jpg', { enableMagicBytesDetection: true });
 
 // reset the global instance (useful in tests or to reconfigure)
 resetBufferAnalysisEngine();
@@ -58,7 +63,6 @@ console.log(Object.keys(MAGIC_BYTES_SIGNATURES));
 ## API Reference
 
 - BufferAnalysisEngine
-
   - constructor(config?: BufferAnalysisConfig, logger?: SimpleLogger)
   - analyzeBuffer(buffer: Buffer, filename?: string): BufferAnalysisResult
   - getConfig(), updateConfig(), enable(), disable(), isEnabled()
@@ -86,11 +90,11 @@ You can analyze Readable streams (or async iterables of Buffer chunks) without b
 Example:
 
 ```ts
-import { analyzeStream } from "buffer-analysis-engine";
-import { Readable } from "stream";
+import { analyzeStream } from 'buffer-analysis-engine';
+import { Readable } from 'stream';
 
 const r = Readable.from([Buffer.from([0xff, 0xd8, 0xff, 0xe0])]);
-const res = await analyzeStream(r, "photo.jpg");
+const res = await analyzeStream(r, 'photo.jpg');
 ```
 
 Notes:
@@ -107,14 +111,14 @@ We provide tiny middleware factories to help integrate the engine into Node.js w
 Example (Express):
 
 ```ts
-import express from "express";
-import { expressBufferAnalysisMiddleware } from "buffer-analysis-engine";
+import express from 'express';
+import { expressBufferAnalysisMiddleware } from 'buffer-analysis-engine';
 
 const app = express();
 // Use after body parsers so body is available as Buffer/string
-app.use(expressBufferAnalysisMiddleware({ attachProperty: "bufferAnalysis" }));
+app.use(expressBufferAnalysisMiddleware({ attachProperty: 'bufferAnalysis' }));
 
-app.post("/upload", (req, res) => {
+app.post('/upload', (req, res) => {
   // req.bufferAnalysis is attached by middleware
   res.json({ mime: req.bufferAnalysis?.detectedMimeType });
 });
@@ -129,8 +133,8 @@ If you need middleware to inspect raw streams (before body parsing) you can enab
 You can add and remove signatures at runtime:
 
 ```ts
-import { addMagicBytesSignature, removeMagicBytesSignatures } from "buffer-analysis-engine";
-addMagicBytesSignature("application/x-custom", [0x01, 0x02, 0x03]);
+import { addMagicBytesSignature, removeMagicBytesSignatures } from 'buffer-analysis-engine';
+addMagicBytesSignature('application/x-custom', [0x01, 0x02, 0x03]);
 ```
 
 ---
