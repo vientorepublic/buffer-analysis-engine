@@ -392,15 +392,3 @@ export function isBufferAnalysisEnabled(): boolean {
 export function resetBufferAnalysisEngine(): void {
   globalBufferAnalysisEngine = null;
 }
-
-export function logBufferAnalysisStatus(force = false): void {
-  if (!force && process.env.NODE_ENV === 'production') return;
-  const engine = getBufferAnalysisEngine();
-  const enabled = engine.isEnabled();
-  console.debug('Buffer Analysis Engine Status:');
-  console.debug(`- Enabled: ${enabled}`);
-  console.debug(
-    `- Environment DISABLE_BUFFER_ANALYSIS: ${process.env.DISABLE_BUFFER_ANALYSIS ?? 'N/A'}`,
-  );
-  console.debug(`- Global instance exists: ${globalBufferAnalysisEngine !== null}`);
-}

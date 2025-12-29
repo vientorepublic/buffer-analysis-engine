@@ -73,8 +73,6 @@ console.log(Object.keys(MAGIC_BYTES_SIGNATURES));
 
 - resetBufferAnalysisEngine() — reset the global singleton (useful in tests or when reconfiguring at runtime).
 
-- logBufferAnalysisStatus(force = false) — prints a small status summary (skips in production unless `force` is true).
-
 - MAGIC_BYTES_SIGNATURES — exported map of mime types -> magic byte signatures
 - addMagicBytesSignature(mimeType, signature) — add a magic signature at runtime
 - removeMagicBytesSignatures(mimeType) — remove all signatures for a mime type
