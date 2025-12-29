@@ -1,6 +1,8 @@
 import type { ReadableLike } from './types';
 import { analyzeBuffer, analyzeStream } from './engine';
 import type { BufferAnalysisConfig } from './types';
+import type { Request, Response, NextFunction } from 'express';
+import type { Context, Next as KoaNext } from 'koa';
 import { Readable } from 'stream';
 
 export interface MiddlewareOptions {
@@ -16,48 +18,42 @@ export interface MiddlewareOptions {
 export function expressBufferAnalysisMiddleware(opts: MiddlewareOptions = {}) {
   const attach = opts.attachProperty ?? 'bufferAnalysis';
 
-  return async (req: any, res: any, next: any) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // If body is buffer or string (already parsed), use it
+      const filename = opts.filenameField
+        ? ((req as any)[opts.filenameField] as string | undefined)
+        : undefined;
+
+      // If body is buffer (already parsed), use it
       if (req.body && Buffer.isBuffer(req.body)) {
-        const result = analyzeBuffer(
-          req.body,
-          opts.filenameField ? req[opts.filenameField] : undefined,
-          opts.config,
-        );
-        req[attach] = result;
+        const result = analyzeBuffer(req.body, filename, opts.config);
+        (req as any)[attach] = result;
         return next();
       }
 
+      // If body is a parsed string
       if (req.body && typeof req.body === 'string') {
         const buf = Buffer.from(req.body);
-        const result = analyzeBuffer(
-          buf,
-          opts.filenameField ? req[opts.filenameField] : undefined,
-          opts.config,
-        );
-        req[attach] = result;
+        (req as any)[attach] = analyzeBuffer(buf, filename, opts.config);
         return next();
       }
 
-      if (opts.consumeRequestStream && req.readable) {
-        // Buffer up to maxAnalysisDepth, then attach
+      // Optionally consume the raw request stream (beware: this will consume the stream)
+      const readableReq = req as unknown as NodeJS.ReadableStream;
+      if (opts.consumeRequestStream && (readableReq as any).readable) {
         const resu = await analyzeStream(
-          req as ReadableLike,
-          opts.filenameField ? req[opts.filenameField] : undefined,
+          readableReq as ReadableLike,
+          filename,
           opts.config ?? undefined,
         );
-        req[attach] = resu;
-        // Also capture raw buffer for downstream handlers if they want it
-        // Note: this consumes the request stream.
-        // Best practice: use after body parsers or ensure downstream reads from req.rawBody
-        req.rawBody = Buffer.isBuffer(req._raw) ? req._raw : undefined;
+        (req as any)[attach] = resu;
+        (req as any).rawBody = Buffer.isBuffer((req as any)._raw) ? (req as any)._raw : undefined;
         return next();
       }
 
       return next();
     } catch (err) {
-      return next(err);
+      return next(err as Error);
     }
   };
 }
@@ -65,24 +61,23 @@ export function expressBufferAnalysisMiddleware(opts: MiddlewareOptions = {}) {
 export function koaBufferAnalysisMiddleware(opts: MiddlewareOptions = {}) {
   const attach = opts.attachProperty ?? 'bufferAnalysis';
 
-  return async (ctx: any, next: any) => {
-    if (ctx.request && ctx.request.body && Buffer.isBuffer(ctx.request.body)) {
-      ctx[attach] = analyzeBuffer(
-        ctx.request.body,
-        opts.filenameField ? ctx.request[opts.filenameField] : undefined,
-        opts.config,
-      );
+  return async (ctx: Context, next: KoaNext) => {
+    const filename = opts.filenameField
+      ? ((ctx.request as any)[opts.filenameField] as string | undefined)
+      : undefined;
+
+    const koaBody = (ctx.request as any).body;
+    if (koaBody && Buffer.isBuffer(koaBody)) {
+      (ctx as any)[attach] = analyzeBuffer(koaBody, filename, opts.config);
+    } else if (koaBody && typeof koaBody === 'string') {
+      (ctx as any)[attach] = analyzeBuffer(Buffer.from(koaBody), filename, opts.config);
     } else if (opts.consumeRequestStream) {
-      // Koa body may be a stream
       const reqStream = ctx.req as Readable;
       if (reqStream) {
-        ctx[attach] = await analyzeStream(
-          reqStream,
-          opts.filenameField ? ctx.request[opts.filenameField] : undefined,
-          opts.config,
-        );
+        (ctx as any)[attach] = await analyzeStream(reqStream, filename, opts.config);
       }
     }
+
     await next();
   };
 }

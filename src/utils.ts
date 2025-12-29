@@ -35,3 +35,9 @@ export const consoleLikeLogger: SimpleLogger = {
     if (typeof console !== 'undefined' && console.error) console.error(...args);
   },
 };
+export const silentLogger: SimpleLogger = {
+  debug: () => {},
+  log: () => {},
+  warn: () => {},
+  error: () => {},
+};

@@ -1,6 +1,6 @@
 import { BufferAnalysisConfig, BufferAnalysisResult } from './types';
 import { MAGIC_BYTES_SIGNATURES } from './magic-bytes';
-import { safeObjectAssign, SimpleLogger, consoleLikeLogger } from './utils';
+import { safeObjectAssign, SimpleLogger, silentLogger } from './utils';
 
 const DEFAULT_BUFFER_ANALYSIS_CONFIG: Required<BufferAnalysisConfig> = {
   enableMagicBytesDetection: true,
@@ -12,12 +12,13 @@ const DEFAULT_BUFFER_ANALYSIS_CONFIG: Required<BufferAnalysisConfig> = {
 
 export class BufferAnalysisEngine {
   private readonly config: Required<BufferAnalysisConfig>;
-  private readonly logger: SimpleLogger;
+  private logger: SimpleLogger;
   private enabled = true;
 
   constructor(config?: BufferAnalysisConfig, logger?: SimpleLogger) {
     this.config = { ...DEFAULT_BUFFER_ANALYSIS_CONFIG, ...config };
-    this.logger = logger ?? consoleLikeLogger;
+    // Default to a silent logger to avoid noisy logs unless the user provides a logger
+    this.logger = logger ?? silentLogger;
 
     const envDisabled = process.env.DISABLE_BUFFER_ANALYSIS === 'true';
     if (envDisabled) {
@@ -329,7 +330,11 @@ export class BufferAnalysisEngine {
       newConfig as Record<string, unknown>,
       allowedConfigKeys as string[],
     );
-    this.logger.log && this.logger.log('Buffer analysis configuration updated');
+    this.logger.log?.('Buffer analysis configuration updated');
+  }
+
+  setLogger(logger: SimpleLogger): void {
+    this.logger = logger;
   }
 }
 
