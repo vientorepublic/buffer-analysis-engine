@@ -1,15 +1,23 @@
 {
   "name": "buffer-analysis-engine",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Lightweight, dependency-free buffer analysis engine for file content inspection",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist"
   ],
+  "engines": {
+    "node": ">=16"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "vitest"
+    "check": "tsc -p tsconfig.build.json --noEmit",
+    "lint": "eslint 'src/**/*.{ts,js}' --fix",
+    "format": "prettier --write \"src/**/*.{ts,js,json}\"",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "prepublishOnly": "npm run build"
   },
   "license": "MIT",
   "keywords": [
@@ -19,15 +27,21 @@
     "mime",
     "security"
   ],
-  "author": "FlowAuth Contributors",
+  "author": "vientorepublic",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/flowauth.git"
+    "url": "https://github.com/vientorepublic/buffer-analysis-engine.git"
   },
   "publishConfig": {
     "access": "public"
   },
   "devDependencies": {
+    "@types/node": "^25.0.3",
+    "@typescript-eslint/eslint-plugin": "^8.50.1",
+    "@typescript-eslint/parser": "^8.50.1",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.7.4",
     "typescript": "^5.9.3",
     "vitest": "^4.0.16"
   }

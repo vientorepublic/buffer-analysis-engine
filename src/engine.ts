@@ -1,6 +1,6 @@
-import { BufferAnalysisConfig, BufferAnalysisResult } from "./types";
-import { MAGIC_BYTES_SIGNATURES } from "./magic-bytes";
-import { safeObjectAssign, SimpleLogger, consoleLikeLogger } from "./utils";
+import { BufferAnalysisConfig, BufferAnalysisResult } from './types';
+import { MAGIC_BYTES_SIGNATURES } from './magic-bytes';
+import { safeObjectAssign, SimpleLogger, consoleLikeLogger } from './utils';
 
 const DEFAULT_BUFFER_ANALYSIS_CONFIG: Required<BufferAnalysisConfig> = {
   enableMagicBytesDetection: true,
@@ -19,10 +19,12 @@ export class BufferAnalysisEngine {
     this.config = { ...DEFAULT_BUFFER_ANALYSIS_CONFIG, ...config };
     this.logger = logger ?? consoleLikeLogger;
 
-    const envDisabled = process.env.DISABLE_BUFFER_ANALYSIS === "true";
+    const envDisabled = process.env.DISABLE_BUFFER_ANALYSIS === 'true';
     if (envDisabled) {
       this.enabled = false;
-      this.logger.warn && this.logger.warn("Buffer analysis disabled by environment variable DISABLE_BUFFER_ANALYSIS");
+      this.logger.warn?.(
+        'Buffer analysis disabled by environment variable DISABLE_BUFFER_ANALYSIS',
+      );
     }
   }
 
@@ -44,7 +46,7 @@ export class BufferAnalysisEngine {
         suspiciousPatterns: [],
         confidence: 0,
         analysisSkipped: true,
-        skipReason: "Buffer analysis engine is disabled",
+        skipReason: 'Buffer analysis engine is disabled',
       };
     }
 
@@ -80,18 +82,22 @@ export class BufferAnalysisEngine {
 
       result.confidence = this.calculateConfidence(buffer, result);
 
-      this.logger.debug && this.logger.debug(`Buffer analysis completed for ${filename ?? "unknown"}: ${JSON.stringify(result)}`);
+      this.logger.debug?.(
+        `Buffer analysis completed for ${filename ?? 'unknown'}: ${JSON.stringify(result)}`,
+      );
 
       return result;
     } catch (error) {
-      this.logger.error && this.logger.error(`Buffer analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+      this.logger.error?.(
+        `Buffer analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
       return {
         detectedMimeType: null,
         hasSuspiciousPatterns: false,
         suspiciousPatterns: [],
         confidence: 0,
         analysisSkipped: true,
-        skipReason: "Analysis failed due to error",
+        skipReason: 'Analysis failed due to error',
       };
     }
   }
@@ -107,33 +113,186 @@ export class BufferAnalysisEngine {
     return null;
   }
 
+  private getMaxSignatureLength(): number {
+    let max = 0;
+    for (const sigs of Object.values(MAGIC_BYTES_SIGNATURES)) {
+      for (const sig of sigs) {
+        max = Math.max(max, sig.length);
+      }
+    }
+    return max;
+  }
+
+  async analyzeStream(
+    readable: import('./types').ReadableLike,
+    filename?: string,
+  ): Promise<BufferAnalysisResult> {
+    if (!this.enabled) {
+      return {
+        detectedMimeType: null,
+        hasSuspiciousPatterns: false,
+        suspiciousPatterns: [],
+        confidence: 0,
+        analysisSkipped: true,
+        skipReason: 'Buffer analysis engine is disabled',
+      };
+    }
+
+    // Pull bytes from stream up to either maxAnalysisDepth or until we have enough for magic detection
+    const maxSigLen = this.getMaxSignatureLength();
+    const analysisDepth = Math.min(
+      this.config.maxAnalysisDepth,
+      maxSigLen || this.config.maxAnalysisDepth,
+    );
+
+    const chunks: Buffer[] = [];
+    let totalLength = 0;
+
+    const asyncIterator = this.toAsyncIterator(readable);
+    try {
+      for await (const chunk of asyncIterator) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        chunks.push(buf);
+        totalLength += buf.length;
+
+        if (this.config.skipLargeFiles && totalLength > this.config.maxFileSize) {
+          // Try to destroy if possible (if readable is a stream with destroy)
+          try {
+            const maybeStream = readable as NodeJS.ReadableStream & {
+              destroy?: (err?: any) => void;
+            };
+            if (typeof maybeStream.destroy === 'function') maybeStream.destroy();
+          } catch {
+            // ignore
+          }
+          return {
+            detectedMimeType: null,
+            hasSuspiciousPatterns: false,
+            suspiciousPatterns: [],
+            confidence: 0,
+            analysisSkipped: true,
+            skipReason: `File too large (${totalLength} bytes > ${this.config.maxFileSize} bytes)`,
+          };
+        }
+
+        // If we only need magic bytes and we've got enough, we can stop early
+        if (
+          !this.config.enableSuspiciousPatternAnalysis &&
+          this.config.enableMagicBytesDetection &&
+          totalLength >= maxSigLen
+        )
+          break;
+
+        // Stop reading once we have enough bytes for analysis depth
+        if (totalLength >= analysisDepth) break;
+      }
+    } catch (err) {
+      this.logger.error?.(
+        `Stream read failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return {
+        detectedMimeType: null,
+        hasSuspiciousPatterns: false,
+        suspiciousPatterns: [],
+        confidence: 0,
+        analysisSkipped: true,
+        skipReason: 'Stream read error',
+      };
+    }
+
+    const analysisBuffer = Buffer.concat(
+      chunks,
+      Math.min(totalLength, this.config.maxAnalysisDepth),
+    );
+
+    // Reuse analysis from buffer-based method logic
+    const result: BufferAnalysisResult = {
+      detectedMimeType: null,
+      hasSuspiciousPatterns: false,
+      suspiciousPatterns: [],
+      confidence: 100,
+      analysisSkipped: false,
+    };
+
+    if (this.config.enableMagicBytesDetection)
+      result.detectedMimeType = this.detectMimeTypeFromBuffer(analysisBuffer);
+    if (this.config.enableSuspiciousPatternAnalysis) {
+      const { hasSuspicious, patterns } = this.analyzeSuspiciousPatterns(analysisBuffer);
+      result.hasSuspiciousPatterns = hasSuspicious;
+      result.suspiciousPatterns = patterns;
+    }
+
+    result.confidence = this.calculateConfidence(analysisBuffer, result);
+    this.logger.debug?.(
+      `Stream analysis completed for ${filename ?? 'unknown'}: ${JSON.stringify(result)}`,
+    );
+
+    return result;
+  }
+
+  private async *toAsyncIterator(readable: import('./types').ReadableLike): AsyncIterable<Buffer> {
+    // If it's already an async iterable (e.g., Readable in Node 10+), yield directly
+    if (typeof (readable as any)[Symbol.asyncIterator] === 'function') {
+      for await (const chunk of readable as AsyncIterable<unknown>) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as any);
+        yield buf;
+      }
+      return;
+    }
+
+    // Fallback for older Readable streams: wrap events
+    const stream = readable as NodeJS.ReadableStream;
+    const queue: Buffer[] = [];
+    let ended = false;
+    let error: any = null;
+
+    stream.on('data', (chunk: Buffer) =>
+      queue.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+    );
+    stream.on('end', () => (ended = true));
+    stream.on('error', (err: any) => (error = err));
+
+    while (!ended || queue.length > 0) {
+      if (error) throw error;
+      if (queue.length === 0) {
+        // wait for next tick / event
+        await new Promise((r) => setTimeout(r, 1));
+        continue;
+      }
+      yield queue.shift() as Buffer;
+    }
+  }
+
   private matchesMagicBytes(buffer: Buffer, signature: (number | null)[]): boolean {
     if (buffer.length < signature.length) return false;
     for (let i = 0; i < signature.length; i++) {
-      const signatureByte = signature.at(i);
-      const bufferByte = buffer.at(i);
+      const signatureByte = signature[i];
+      const bufferByte = buffer[i];
       if (signatureByte !== null && bufferByte !== signatureByte) return false;
     }
     return true;
   }
 
-  private analyzeSuspiciousPatterns(buffer: Buffer): { hasSuspicious: boolean; patterns: string[] } {
+  private analyzeSuspiciousPatterns(buffer: Buffer): {
+    hasSuspicious: boolean;
+    patterns: string[];
+  } {
     const analysisDepth = Math.min(buffer.length, this.config.maxAnalysisDepth);
     const analysisBuffer = buffer.subarray(0, analysisDepth);
 
     const suspiciousPatterns = [
-      { pattern: Buffer.from("<script", "utf8"), name: "HTML Script Tag" },
-      { pattern: Buffer.from("javascript:", "utf8"), name: "JavaScript Protocol" },
-      { pattern: Buffer.from("vbscript:", "utf8"), name: "VBScript Protocol" },
-      { pattern: Buffer.from("/JavaScript", "utf8"), name: "PDF JavaScript" },
-      { pattern: Buffer.from("alert(", "utf8"), name: "JavaScript Alert" },
-      { pattern: Buffer.from("eval(", "utf8"), name: "JavaScript Eval" },
-      { pattern: Buffer.from("exec(", "utf8"), name: "Execution Command" },
-      { pattern: Buffer.from("system(", "utf8"), name: "System Command" },
-      { pattern: Buffer.from("#!/bin/", "utf8"), name: "Shell Shebang" },
-      { pattern: Buffer.from("cmd.exe", "utf8"), name: "Windows Command" },
-      { pattern: Buffer.from("DROP TABLE", "utf8"), name: "SQL Drop Command" },
-      { pattern: Buffer.from("UNION SELECT", "utf8"), name: "SQL Union" },
+      { pattern: Buffer.from('<script', 'utf8'), name: 'HTML Script Tag' },
+      { pattern: Buffer.from('javascript:', 'utf8'), name: 'JavaScript Protocol' },
+      { pattern: Buffer.from('vbscript:', 'utf8'), name: 'VBScript Protocol' },
+      { pattern: Buffer.from('/JavaScript', 'utf8'), name: 'PDF JavaScript' },
+      { pattern: Buffer.from('alert(', 'utf8'), name: 'JavaScript Alert' },
+      { pattern: Buffer.from('eval(', 'utf8'), name: 'JavaScript Eval' },
+      { pattern: Buffer.from('exec(', 'utf8'), name: 'Execution Command' },
+      { pattern: Buffer.from('system(', 'utf8'), name: 'System Command' },
+      { pattern: Buffer.from('#!/bin/', 'utf8'), name: 'Shell Shebang' },
+      { pattern: Buffer.from('cmd.exe', 'utf8'), name: 'Windows Command' },
+      { pattern: Buffer.from('DROP TABLE', 'utf8'), name: 'SQL Drop Command' },
+      { pattern: Buffer.from('UNION SELECT', 'utf8'), name: 'SQL Union' },
     ];
 
     const foundPatterns: string[] = [];
@@ -158,21 +317,28 @@ export class BufferAnalysisEngine {
 
   updateConfig(newConfig: Partial<BufferAnalysisConfig>): void {
     const allowedConfigKeys: (keyof BufferAnalysisConfig)[] = [
-      "enableMagicBytesDetection",
-      "enableSuspiciousPatternAnalysis",
-      "maxAnalysisDepth",
-      "skipLargeFiles",
-      "maxFileSize",
+      'enableMagicBytesDetection',
+      'enableSuspiciousPatternAnalysis',
+      'maxAnalysisDepth',
+      'skipLargeFiles',
+      'maxFileSize',
     ];
 
-    safeObjectAssign(this.config as Record<string, unknown>, newConfig as Record<string, unknown>, allowedConfigKeys as string[]);
-    this.logger.log && this.logger.log("Buffer analysis configuration updated");
+    safeObjectAssign(
+      this.config as Record<string, unknown>,
+      newConfig as Record<string, unknown>,
+      allowedConfigKeys as string[],
+    );
+    this.logger.log && this.logger.log('Buffer analysis configuration updated');
   }
 }
 
 let globalBufferAnalysisEngine: BufferAnalysisEngine | null = null;
 
-export function getBufferAnalysisEngine(config?: BufferAnalysisConfig, logger?: SimpleLogger): BufferAnalysisEngine {
+export function getBufferAnalysisEngine(
+  config?: BufferAnalysisConfig,
+  logger?: SimpleLogger,
+): BufferAnalysisEngine {
   if (!globalBufferAnalysisEngine) {
     globalBufferAnalysisEngine = new BufferAnalysisEngine(config, logger);
     globalBufferAnalysisEngine.enable();
@@ -180,9 +346,32 @@ export function getBufferAnalysisEngine(config?: BufferAnalysisConfig, logger?: 
   return globalBufferAnalysisEngine;
 }
 
-export function analyzeBuffer(buffer: Buffer, filename?: string, config?: BufferAnalysisConfig): BufferAnalysisResult {
-  const engine = getBufferAnalysisEngine(config);
+export function analyzeBuffer(
+  buffer: Buffer,
+  filename?: string,
+  config?: BufferAnalysisConfig,
+): BufferAnalysisResult {
+  // If a per-call config is provided, use a temporary engine so caller config is respected
+  if (config) {
+    const tempEngine = new BufferAnalysisEngine(config);
+    return tempEngine.analyzeBuffer(buffer, filename);
+  }
+
+  const engine = getBufferAnalysisEngine();
   return engine.analyzeBuffer(buffer, filename);
+}
+
+export async function analyzeStream(
+  readable: import('./types').ReadableLike,
+  filename?: string,
+  config?: BufferAnalysisConfig,
+): Promise<BufferAnalysisResult> {
+  if (config) {
+    const tempEngine = new BufferAnalysisEngine(config);
+    return tempEngine.analyzeStream(readable, filename);
+  }
+  const engine = getBufferAnalysisEngine();
+  return engine.analyzeStream(readable, filename);
 }
 
 export function setBufferAnalysisEnabled(enabled: boolean): void {
@@ -195,12 +384,18 @@ export function isBufferAnalysisEnabled(): boolean {
   return getBufferAnalysisEngine().isEnabled();
 }
 
+export function resetBufferAnalysisEngine(): void {
+  globalBufferAnalysisEngine = null;
+}
+
 export function logBufferAnalysisStatus(force = false): void {
-  if (!force && process.env.NODE_ENV === "production") return;
+  if (!force && process.env.NODE_ENV === 'production') return;
   const engine = getBufferAnalysisEngine();
   const enabled = engine.isEnabled();
-  console.debug("Buffer Analysis Engine Status:");
+  console.debug('Buffer Analysis Engine Status:');
   console.debug(`- Enabled: ${enabled}`);
-  console.debug(`- Environment DISABLE_BUFFER_ANALYSIS: ${process.env.DISABLE_BUFFER_ANALYSIS ?? "N/A"}`);
+  console.debug(
+    `- Environment DISABLE_BUFFER_ANALYSIS: ${process.env.DISABLE_BUFFER_ANALYSIS ?? 'N/A'}`,
+  );
   console.debug(`- Global instance exists: ${globalBufferAnalysisEngine !== null}`);
 }

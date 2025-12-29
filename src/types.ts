@@ -14,3 +14,5 @@ export interface BufferAnalysisResult {
   analysisSkipped: boolean;
   skipReason?: string;
 }
+
+export type ReadableLike = NodeJS.ReadableStream | AsyncIterable<Buffer>;
