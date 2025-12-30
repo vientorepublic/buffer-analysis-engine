@@ -10,13 +10,25 @@ const DEFAULT_BUFFER_ANALYSIS_CONFIG: Required<BufferAnalysisConfig> = {
   maxFileSize: 50 * 1024 * 1024,
 };
 
+function validateConfig(config: Partial<BufferAnalysisConfig>): void {
+  if (config.maxAnalysisDepth !== undefined && config.maxAnalysisDepth < 0) {
+    throw new Error('maxAnalysisDepth must be non-negative');
+  }
+  if (config.maxFileSize !== undefined && config.maxFileSize < 0) {
+    throw new Error('maxFileSize must be non-negative');
+  }
+  // Note: maxAnalysisDepth can be larger than maxFileSize as it controls analysis depth, not file size limit
+}
+
 export class BufferAnalysisEngine {
   private readonly config: Required<BufferAnalysisConfig>;
   private logger: SimpleLogger;
   private enabled = true;
 
   constructor(config?: BufferAnalysisConfig, logger?: SimpleLogger) {
-    this.config = { ...DEFAULT_BUFFER_ANALYSIS_CONFIG, ...config };
+    const mergedConfig = { ...DEFAULT_BUFFER_ANALYSIS_CONFIG, ...config };
+    validateConfig(mergedConfig);
+    this.config = mergedConfig;
     // Default to a silent logger to avoid noisy logs unless the user provides a logger
     this.logger = logger ?? silentLogger;
 
@@ -48,6 +60,18 @@ export class BufferAnalysisEngine {
         confidence: 0,
         analysisSkipped: true,
         skipReason: 'Buffer analysis engine is disabled',
+      };
+    }
+
+    if (!Buffer.isBuffer(buffer)) {
+      this.logger.error?.('analyzeBuffer called with non-Buffer input');
+      return {
+        detectedMimeType: null,
+        hasSuspiciousPatterns: false,
+        suspiciousPatterns: [],
+        confidence: 0,
+        analysisSkipped: true,
+        skipReason: 'Invalid input: expected Buffer',
       };
     }
 
@@ -136,6 +160,18 @@ export class BufferAnalysisEngine {
         confidence: 0,
         analysisSkipped: true,
         skipReason: 'Buffer analysis engine is disabled',
+      };
+    }
+
+    if (!readable || typeof readable !== 'object') {
+      this.logger.error?.('analyzeStream called with invalid readable input');
+      return {
+        detectedMimeType: null,
+        hasSuspiciousPatterns: false,
+        suspiciousPatterns: [],
+        confidence: 0,
+        analysisSkipped: true,
+        skipReason: 'Invalid input: expected readable stream',
       };
     }
 
@@ -324,6 +360,14 @@ export class BufferAnalysisEngine {
       'skipLargeFiles',
       'maxFileSize',
     ];
+
+    const tempConfig = { ...this.config };
+    safeObjectAssign(
+      tempConfig as Record<string, unknown>,
+      newConfig as Record<string, unknown>,
+      allowedConfigKeys as string[],
+    );
+    validateConfig(tempConfig);
 
     safeObjectAssign(
       this.config as Record<string, unknown>,

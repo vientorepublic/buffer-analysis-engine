@@ -174,6 +174,39 @@ describe('BufferAnalysisEngine basic behavior', () => {
     expect(engine.getConfig().enableMagicBytesDetection).toBe(true);
   });
 
+  it('validates config values in constructor', () => {
+    expect(() => new BufferAnalysisEngine({ maxAnalysisDepth: -1 })).toThrow(
+      'maxAnalysisDepth must be non-negative',
+    );
+    expect(() => new BufferAnalysisEngine({ maxFileSize: -1 })).toThrow(
+      'maxFileSize must be non-negative',
+    );
+    // maxAnalysisDepth can be larger than maxFileSize
+    expect(
+      () => new BufferAnalysisEngine({ maxAnalysisDepth: 100, maxFileSize: 50 }),
+    ).not.toThrow();
+  });
+
+  it('validates config values in updateConfig', () => {
+    const engine = new BufferAnalysisEngine();
+    expect(() => engine.updateConfig({ maxAnalysisDepth: -1 })).toThrow(
+      'maxAnalysisDepth must be non-negative',
+    );
+    expect(() => engine.updateConfig({ maxFileSize: -1 })).toThrow(
+      'maxFileSize must be non-negative',
+    );
+    // maxAnalysisDepth can be larger than maxFileSize
+    expect(() => engine.updateConfig({ maxAnalysisDepth: 100, maxFileSize: 50 })).not.toThrow();
+  });
+
+  it('handles edge case config values', () => {
+    const engine = new BufferAnalysisEngine({ maxAnalysisDepth: 0, maxFileSize: 0 });
+    const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+    const result = engine.analyzeBuffer(buf, 'test.jpg');
+    expect(result.detectedMimeType).toBe(null); // No analysis due to depth 0
+    expect(result.hasSuspiciousPatterns).toBe(false);
+  });
+
   it('global instance behavior', () => {
     const g1 = getBufferAnalysisEngine();
     const g2 = getBufferAnalysisEngine();
@@ -276,6 +309,60 @@ describe('BufferAnalysisEngine basic behavior', () => {
     expect(res4.confidence).toBeLessThan(100);
   });
 
+  it('handles logger errors gracefully', () => {
+    const faultyLogger = {
+      debug: () => {
+        throw new Error('Logger error');
+      },
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const engine = new BufferAnalysisEngine({}, faultyLogger);
+    const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+
+    // Should not throw despite logger error
+    expect(() => engine.analyzeBuffer(buf, 'test.jpg')).not.toThrow();
+  });
+
+  it('handles analysis errors gracefully', () => {
+    const engine = new BufferAnalysisEngine();
+    // Mock detectMimeTypeFromBuffer to throw
+    const originalDetect = engine['detectMimeTypeFromBuffer'];
+    engine['detectMimeTypeFromBuffer'] = () => {
+      throw new Error('Detection error');
+    };
+
+    const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+    const result = engine.analyzeBuffer(buf, 'error.jpg');
+
+    expect(result.analysisSkipped).toBe(true);
+    expect(result.skipReason).toContain('Analysis failed');
+
+    // Restore
+    engine['detectMimeTypeFromBuffer'] = originalDetect;
+  });
+
+  it('handles concurrent analysis calls', async () => {
+    const engine = new BufferAnalysisEngine();
+    const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+
+    const promises = Array.from({ length: 10 }, () => engine.analyzeBuffer(buf, 'concurrent.jpg'));
+
+    const results = await Promise.all(promises);
+    results.forEach((result) => {
+      expect(result.detectedMimeType).toBe('image/jpeg');
+    });
+  });
+
+  it('handles memory pressure with large analysis depth', () => {
+    const engine = new BufferAnalysisEngine({ maxAnalysisDepth: 10 * 1024 * 1024 }); // 10MB
+    const largeBuf = Buffer.alloc(5 * 1024 * 1024, 0x41); // 5MB
+    const result = engine.analyzeBuffer(largeBuf, 'large.dat');
+    expect(result.analysisSkipped).toBe(false);
+    // Should analyze only up to maxAnalysisDepth
+  });
+
   it('detects WEBP with wildcard signature', () => {
     const buf = Buffer.from([
       0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
@@ -346,10 +433,41 @@ describe('BufferAnalysisEngine basic behavior', () => {
     expect(result.detectedMimeType).toBe(null);
   });
 
-  it('handles buffer smaller than signature', () => {
-    const buf = Buffer.from([0xff, 0xd8]); // Partial JPEG signature
-    const result = engine.analyzeBuffer(buf, 'partial.jpg');
+  it('handles empty buffer', () => {
+    const buf = Buffer.alloc(0);
+    const result = engine.analyzeBuffer(buf, 'empty.dat');
     expect(result.detectedMimeType).toBe(null);
+    expect(result.hasSuspiciousPatterns).toBe(false);
+    expect(result.analysisSkipped).toBe(false);
+    expect(result.confidence).toBeLessThan(100); // Small buffer penalty
+  });
+
+  it('handles very large buffer without crashing', () => {
+    // Create a large buffer but don't actually allocate it fully to avoid memory issues
+    const largeBuf = Buffer.allocUnsafe(100 * 1024 * 1024); // 100MB
+    const result = engine.analyzeBuffer(largeBuf, 'large.dat');
+    expect(result.analysisSkipped).toBe(true);
+    expect(result.skipReason).toContain('File too large');
+  });
+
+  it('handles buffer with special characters and unicode', () => {
+    const buf = Buffer.from('Hello 🌍 <script>alert("test")</script> 你好', 'utf8');
+    const result = engine.analyzeBuffer(buf, 'unicode.txt');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('HTML Script Tag');
+  });
+
+  it('handles invalid buffer input gracefully', () => {
+    // @ts-expect-error Testing invalid input
+    const result = engine.analyzeBuffer('not a buffer', 'invalid.dat');
+    expect(result.analysisSkipped).toBe(true);
+    expect(result.skipReason).toContain('Invalid input');
+  });
+
+  it('handles null/undefined filename', () => {
+    const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+    expect(() => engine.analyzeBuffer(buf)).not.toThrow();
+    expect(() => engine.analyzeBuffer(buf, undefined)).not.toThrow();
   });
 
   it('magic-bytes helpers', () => {
@@ -384,6 +502,25 @@ describe('BufferAnalysisEngine basic behavior', () => {
     expect(sigs).toContain(sig1);
     expect(sigs).toContain(sig2);
     removeMagicBytesSignatures('application/x-multi');
+  });
+
+  it('addMagicBytesSignature handles empty signature', () => {
+    addMagicBytesSignature('application/x-empty', []);
+    const sigs = getSignaturesForMimeType('application/x-empty');
+    expect(sigs).toEqual([[]]);
+    removeMagicBytesSignatures('application/x-empty');
+  });
+
+  it('addMagicBytesSignature handles null values in signature', () => {
+    const sig = [0x01, null, 0x03];
+    addMagicBytesSignature('application/x-null', sig);
+    const sigs = getSignaturesForMimeType('application/x-null');
+    expect(sigs).toEqual([sig]);
+    removeMagicBytesSignatures('application/x-null');
+  });
+
+  it('removeMagicBytesSignatures handles non-existent MIME type', () => {
+    expect(() => removeMagicBytesSignatures('non-existent/type')).not.toThrow();
   });
 
   it('analyzeStream works on small readable streams', async () => {
@@ -434,6 +571,38 @@ describe('BufferAnalysisEngine basic behavior', () => {
     const r = Readable.from(chunks);
     const res = await engine.analyzeStream(r, 'stream.jpg');
     expect(res.hasSuspiciousPatterns).toBe(true);
+  });
+
+  it('analyzeStream handles invalid readable input', async () => {
+    // @ts-expect-error Testing invalid input
+    const res = await engine.analyzeStream(null, 'invalid.dat');
+    expect(res.analysisSkipped).toBe(true);
+    expect(res.skipReason).toContain('Invalid input');
+  });
+
+  it('analyzeStream handles stream with mixed data types', async () => {
+    const { Readable } = await import('stream');
+    const chunks = [
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      'DROP TABLE users', // This should be converted to Buffer and detected
+    ];
+    const r = Readable.from(chunks);
+    const res = await engine.analyzeStream(r, 'mixed.dat');
+    expect(res.detectedMimeType).toBe('image/jpeg');
+    expect(res.hasSuspiciousPatterns).toBe(true);
+    expect(res.suspiciousPatterns).toContain('SQL Drop Command');
+  });
+
+  it('analyzeStream handles stream error gracefully', async () => {
+    const { Readable } = await import('stream');
+    const r = new Readable({
+      read() {
+        this.emit('error', new Error('Stream error'));
+      },
+    });
+    const res = await engine.analyzeStream(r, 'error.dat');
+    expect(res.analysisSkipped).toBe(true);
+    expect(res.skipReason).toContain('Stream read error');
   });
 
   it('express middleware attaches analysis when body is a buffer', async () => {
@@ -526,5 +695,54 @@ describe('BufferAnalysisEngine basic behavior', () => {
     expect(called).toBe(true);
     expect(ctx.analysis).toBeTruthy();
     expect(ctx.analysis.detectedMimeType).toBe('text/html');
+  });
+
+  it('express middleware handles missing body', async () => {
+    const middleware = expressBufferAnalysisMiddleware();
+    const req: any = {};
+    let called = false;
+    const next = () => {
+      called = true;
+    };
+    await middleware(req, {}, next);
+    expect(called).toBe(true);
+    expect(req.bufferAnalysis).toBeUndefined();
+  });
+
+  it('express middleware handles non-string non-buffer body', async () => {
+    const middleware = expressBufferAnalysisMiddleware();
+    const req: any = { body: { key: 'value' } };
+    let called = false;
+    const next = () => {
+      called = true;
+    };
+    await middleware(req, {}, next);
+    expect(called).toBe(true);
+    expect(req.bufferAnalysis).toBeUndefined();
+  });
+
+  it('koa middleware handles missing body', async () => {
+    const middleware = koaBufferAnalysisMiddleware();
+    const ctx: any = { request: {} };
+    let called = false;
+    const next = async () => {
+      called = true;
+    };
+    await middleware(ctx, next);
+    expect(called).toBe(true);
+    expect(ctx.bufferAnalysis).toBeUndefined();
+  });
+
+  it('express middleware handles errors gracefully', async () => {
+    // Create middleware with invalid config to force error
+    const middleware = expressBufferAnalysisMiddleware({ config: { maxAnalysisDepth: -1 } });
+    const req: any = { body: Buffer.from([0xff, 0xd8, 0xff, 0xe0]) };
+    let error: any = null;
+    const next = (err?: any) => {
+      error = err;
+    };
+
+    await middleware(req, {}, next);
+    expect(error).toBeInstanceOf(Error);
   });
 });
