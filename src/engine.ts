@@ -2,6 +2,10 @@ import { BufferAnalysisConfig, BufferAnalysisResult } from './types';
 import { MAGIC_BYTES_SIGNATURES } from './magic-bytes';
 import { safeObjectAssign, SimpleLogger, silentLogger } from './utils';
 
+/**
+ * Default configuration for buffer analysis engine.
+ * @internal
+ */
 const DEFAULT_BUFFER_ANALYSIS_CONFIG: Required<BufferAnalysisConfig> = {
   enableMagicBytesDetection: true,
   enableSuspiciousPatternAnalysis: true,
@@ -10,6 +14,12 @@ const DEFAULT_BUFFER_ANALYSIS_CONFIG: Required<BufferAnalysisConfig> = {
   maxFileSize: 50 * 1024 * 1024,
 };
 
+/**
+ * Validates the buffer analysis configuration.
+ * @param config - Configuration object to validate
+ * @throws {Error} If maxAnalysisDepth or maxFileSize is negative
+ * @internal
+ */
 function validateConfig(config: Partial<BufferAnalysisConfig>): void {
   if (config.maxAnalysisDepth !== undefined && config.maxAnalysisDepth < 0) {
     throw new Error('maxAnalysisDepth must be non-negative');
@@ -20,11 +30,29 @@ function validateConfig(config: Partial<BufferAnalysisConfig>): void {
   // Note: maxAnalysisDepth can be larger than maxFileSize as it controls analysis depth, not file size limit
 }
 
+/**
+ * Core engine for analyzing buffer content, detecting MIME types and suspicious patterns.
+ * Supports both buffer and stream-based analysis with configurable detection options.
+ * @example
+ * ```typescript
+ * const engine = new BufferAnalysisEngine({
+ *   enableMagicBytesDetection: true,
+ *   maxFileSize: 10 * 1024 * 1024
+ * });
+ * const result = engine.analyzeBuffer(myBuffer, 'file.jpg');
+ * ```
+ */
 export class BufferAnalysisEngine {
   private readonly config: Required<BufferAnalysisConfig>;
   private logger: SimpleLogger;
   private enabled = true;
 
+  /**
+   * Creates a new buffer analysis engine instance.
+   * @param config - Optional configuration for buffer analysis behavior
+   * @param logger - Optional logger for diagnostic messages (defaults to silent logger)
+   * @throws {Error} If configuration validation fails
+   */
   constructor(config?: BufferAnalysisConfig, logger?: SimpleLogger) {
     const mergedConfig = { ...DEFAULT_BUFFER_ANALYSIS_CONFIG, ...config };
     validateConfig(mergedConfig);
@@ -41,16 +69,40 @@ export class BufferAnalysisEngine {
     }
   }
 
+  /**
+   * Enables the buffer analysis engine.
+   */
   enable(): void {
     this.enabled = true;
   }
+
+  /**
+   * Disables the buffer analysis engine.
+   */
   disable(): void {
     this.enabled = false;
   }
+
+  /**
+   * Checks if the buffer analysis engine is currently enabled.
+   * @returns true if enabled, false otherwise
+   */
   isEnabled(): boolean {
     return this.enabled;
   }
 
+  /**
+   * Analyzes a buffer for MIME type detection and suspicious patterns.
+   * @param buffer - The buffer to analyze
+   * @param filename - Optional filename for logging context
+   * @returns Analysis result containing detected MIME type, suspicious patterns, and confidence score
+   * @example
+   * ```typescript
+   * const buffer = fs.readFileSync('image.jpg');
+   * const result = engine.analyzeBuffer(buffer, 'image.jpg');
+   * console.log(result.detectedMimeType); // 'image/jpeg'
+   * ```
+   */
   analyzeBuffer(buffer: Buffer, filename?: string): BufferAnalysisResult {
     if (!this.enabled) {
       return {
@@ -127,6 +179,12 @@ export class BufferAnalysisEngine {
     }
   }
 
+  /**
+   * Detects MIME type from buffer using magic bytes signatures.
+   * @param buffer - Buffer to analyze
+   * @returns Detected MIME type or null if not recognized
+   * @private
+   */
   private detectMimeTypeFromBuffer(buffer: Buffer): string | null {
     for (const [mimeType, signatures] of Object.entries(MAGIC_BYTES_SIGNATURES)) {
       for (const signature of signatures) {
@@ -138,6 +196,11 @@ export class BufferAnalysisEngine {
     return null;
   }
 
+  /**
+   * Calculates the maximum length among all magic byte signatures.
+   * @returns Maximum signature length in bytes
+   * @private
+   */
   private getMaxSignatureLength(): number {
     let max = 0;
     for (const sigs of Object.values(MAGIC_BYTES_SIGNATURES)) {
@@ -148,6 +211,18 @@ export class BufferAnalysisEngine {
     return max;
   }
 
+  /**
+   * Analyzes a readable stream for MIME type detection and suspicious patterns.
+   * Only reads up to maxAnalysisDepth bytes from the stream.
+   * @param readable - Readable stream or async iterable to analyze
+   * @param filename - Optional filename for logging context
+   * @returns Promise resolving to analysis result
+   * @example
+   * ```typescript
+   * const stream = fs.createReadStream('file.pdf');
+   * const result = await engine.analyzeStream(stream, 'file.pdf');
+   * ```
+   */
   async analyzeStream(
     readable: import('./types').ReadableLike,
     filename?: string,
@@ -267,6 +342,13 @@ export class BufferAnalysisEngine {
     return result;
   }
 
+  /**
+   * Converts a readable stream to an async iterator.
+   * Handles both native async iterables and legacy event-based streams.
+   * @param readable - Readable stream to convert
+   * @returns Async iterable yielding buffer chunks
+   * @private
+   */
   private async *toAsyncIterator(readable: import('./types').ReadableLike): AsyncIterable<Buffer> {
     // If it's already an async iterable (e.g., Readable in Node 10+), yield directly
     if (typeof (readable as any)[Symbol.asyncIterator] === 'function') {
@@ -300,6 +382,13 @@ export class BufferAnalysisEngine {
     }
   }
 
+  /**
+   * Checks if buffer matches a magic bytes signature.
+   * @param buffer - Buffer to check
+   * @param signature - Magic bytes signature (null values are wildcards)
+   * @returns true if buffer matches the signature
+   * @private
+   */
   private matchesMagicBytes(buffer: Buffer, signature: (number | null)[]): boolean {
     if (buffer.length < signature.length) return false;
     for (let i = 0; i < signature.length; i++) {
@@ -310,6 +399,12 @@ export class BufferAnalysisEngine {
     return true;
   }
 
+  /**
+   * Analyzes buffer for suspicious patterns such as script tags, eval calls, SQL injection attempts, etc.
+   * @param buffer - Buffer to analyze
+   * @returns Object containing whether suspicious patterns were found and list of pattern names
+   * @private
+   */
   private analyzeSuspiciousPatterns(buffer: Buffer): {
     hasSuspicious: boolean;
     patterns: string[];
@@ -340,6 +435,14 @@ export class BufferAnalysisEngine {
     return { hasSuspicious: foundPatterns.length > 0, patterns: foundPatterns };
   }
 
+  /**
+   * Calculates confidence score for the analysis result.
+   * Score is reduced if MIME type is not detected, suspicious patterns are found, or buffer is too small.
+   * @param buffer - Original buffer
+   * @param result - Analysis result
+   * @returns Confidence score between 0 and 100
+   * @private
+   */
   private calculateConfidence(buffer: Buffer, result: BufferAnalysisResult): number {
     let confidence = 100;
     if (!result.detectedMimeType) confidence -= 20;
@@ -348,10 +451,20 @@ export class BufferAnalysisEngine {
     return Math.max(0, Math.min(100, confidence));
   }
 
+  /**
+   * Returns a copy of the current configuration.
+   * @returns Current configuration object
+   */
   getConfig(): Required<BufferAnalysisConfig> {
     return { ...this.config };
   }
 
+  /**
+   * Updates the engine configuration with new values.
+   * Only allowed configuration keys are updated, protecting against prototype pollution.
+   * @param newConfig - Partial configuration with values to update
+   * @throws {Error} If validation fails for the updated configuration
+   */
   updateConfig(newConfig: Partial<BufferAnalysisConfig>): void {
     const allowedConfigKeys: (keyof BufferAnalysisConfig)[] = [
       'enableMagicBytesDetection',
@@ -377,6 +490,10 @@ export class BufferAnalysisEngine {
     this.logger.log?.('Buffer analysis configuration updated');
   }
 
+  /**
+   * Sets a new logger for the engine.
+   * @param logger - Logger instance implementing SimpleLogger interface
+   */
   setLogger(logger: SimpleLogger): void {
     this.logger = logger;
   }
@@ -384,6 +501,12 @@ export class BufferAnalysisEngine {
 
 let globalBufferAnalysisEngine: BufferAnalysisEngine | null = null;
 
+/**
+ * Gets or creates a singleton instance of the buffer analysis engine.
+ * @param config - Optional configuration for initial creation
+ * @param logger - Optional logger for initial creation
+ * @returns Global buffer analysis engine instance
+ */
 export function getBufferAnalysisEngine(
   config?: BufferAnalysisConfig,
   logger?: SimpleLogger,
@@ -395,6 +518,17 @@ export function getBufferAnalysisEngine(
   return globalBufferAnalysisEngine;
 }
 
+/**
+ * Convenience function to analyze a buffer using the global engine or a temporary engine with custom config.
+ * @param buffer - Buffer to analyze
+ * @param filename - Optional filename for logging
+ * @param config - Optional configuration (creates temporary engine if provided)
+ * @returns Analysis result
+ * @example
+ * ```typescript
+ * const result = analyzeBuffer(myBuffer, 'file.bin');
+ * ```
+ */
 export function analyzeBuffer(
   buffer: Buffer,
   filename?: string,
@@ -410,6 +544,17 @@ export function analyzeBuffer(
   return engine.analyzeBuffer(buffer, filename);
 }
 
+/**
+ * Convenience function to analyze a stream using the global engine or a temporary engine with custom config.
+ * @param readable - Readable stream or async iterable to analyze
+ * @param filename - Optional filename for logging
+ * @param config - Optional configuration (creates temporary engine if provided)
+ * @returns Promise resolving to analysis result
+ * @example
+ * ```typescript
+ * const result = await analyzeStream(readStream, 'file.pdf');
+ * ```
+ */
 export async function analyzeStream(
   readable: import('./types').ReadableLike,
   filename?: string,
@@ -423,16 +568,28 @@ export async function analyzeStream(
   return engine.analyzeStream(readable, filename);
 }
 
+/**
+ * Enables or disables the global buffer analysis engine.
+ * @param enabled - Whether to enable (true) or disable (false) the engine
+ */
 export function setBufferAnalysisEnabled(enabled: boolean): void {
   const engine = getBufferAnalysisEngine();
   if (enabled) engine.enable();
   else engine.disable();
 }
 
+/**
+ * Checks if the global buffer analysis engine is enabled.
+ * @returns true if enabled, false otherwise
+ */
 export function isBufferAnalysisEnabled(): boolean {
   return getBufferAnalysisEngine().isEnabled();
 }
 
+/**
+ * Resets the global buffer analysis engine instance.
+ * Next call to getBufferAnalysisEngine will create a new instance.
+ */
 export function resetBufferAnalysisEngine(): void {
   globalBufferAnalysisEngine = null;
 }

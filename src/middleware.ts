@@ -5,6 +5,9 @@ import type { Request, Response, NextFunction } from 'express';
 import type { Context, Next as KoaNext } from 'koa';
 import { Readable } from 'stream';
 
+/**
+ * Configuration options for buffer analysis middleware.
+ */
 export interface MiddlewareOptions {
   /** If true, middleware will consume request stream when no parsed body is present (body will be buffered up to maxAnalysisDepth) */
   consumeRequestStream?: boolean;
@@ -15,6 +18,20 @@ export interface MiddlewareOptions {
   config?: BufferAnalysisConfig;
 }
 
+/**
+ * Creates Express middleware for buffer analysis.
+ * Analyzes request body if it's a Buffer or string, or optionally consumes request stream.
+ * Attaches analysis result to the request object.
+ * @param opts - Middleware configuration options
+ * @returns Express middleware function
+ * @example
+ * ```typescript
+ * app.use(expressBufferAnalysisMiddleware({
+ *   attachProperty: 'fileAnalysis',
+ *   consumeRequestStream: false
+ * }));
+ * ```
+ */
 export function expressBufferAnalysisMiddleware(opts: MiddlewareOptions = {}) {
   const attach = opts.attachProperty ?? 'bufferAnalysis';
 
@@ -58,6 +75,20 @@ export function expressBufferAnalysisMiddleware(opts: MiddlewareOptions = {}) {
   };
 }
 
+/**
+ * Creates Koa middleware for buffer analysis.
+ * Analyzes request body if it's a Buffer or string, or optionally consumes request stream.
+ * Attaches analysis result to the context object.
+ * @param opts - Middleware configuration options
+ * @returns Koa middleware function
+ * @example
+ * ```typescript
+ * app.use(koaBufferAnalysisMiddleware({
+ *   attachProperty: 'fileAnalysis',
+ *   consumeRequestStream: false
+ * }));
+ * ```
+ */
 export function koaBufferAnalysisMiddleware(opts: MiddlewareOptions = {}) {
   const attach = opts.attachProperty ?? 'bufferAnalysis';
 

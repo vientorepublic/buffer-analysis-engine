@@ -1,3 +1,11 @@
+/**
+ * Safely assigns properties from source to target, protecting against prototype pollution.
+ * Only assigns allowed keys and skips dangerous property names.
+ * @param target - Target object to assign properties to
+ * @param source - Source object to copy properties from
+ * @param allowedKeys - List of allowed property keys
+ * @returns Target object with assigned properties
+ */
 export function safeObjectAssign<T extends Record<string, unknown>>(
   target: T,
   source: Record<string, unknown>,
@@ -14,6 +22,10 @@ export function safeObjectAssign<T extends Record<string, unknown>>(
   return target;
 }
 
+/**
+ * Simple logger interface for diagnostic messages.
+ * All methods are optional to support partial implementations.
+ */
 export interface SimpleLogger {
   debug?: (...args: unknown[]) => void;
   log?: (...args: unknown[]) => void;
@@ -21,6 +33,10 @@ export interface SimpleLogger {
   error?: (...args: unknown[]) => void;
 }
 
+/**
+ * Console-based logger implementation.
+ * Safely wraps console methods to handle environments where console may not be available.
+ */
 export const consoleLikeLogger: SimpleLogger = {
   debug: (...args: unknown[]) => {
     if (typeof console !== 'undefined' && console.debug) console.debug(...args);
@@ -35,6 +51,10 @@ export const consoleLikeLogger: SimpleLogger = {
     if (typeof console !== 'undefined' && console.error) console.error(...args);
   },
 };
+/**
+ * Silent logger implementation that discards all log messages.
+ * Useful as a default logger to avoid noisy output.
+ */
 export const silentLogger: SimpleLogger = {
   debug: () => {},
   log: () => {},

@@ -1,5 +1,14 @@
+/**
+ * Represents a magic bytes signature for file type detection.
+ * Each element is a byte value (0-255) or null for wildcard matching.
+ */
 export type MagicBytesSignature = (number | null)[];
 
+/**
+ * Collection of magic bytes signatures for various MIME types.
+ * Maps MIME types to arrays of byte signatures that identify those file types.
+ * null values in signatures act as wildcards.
+ */
 export const MAGIC_BYTES_SIGNATURES: Record<string, MagicBytesSignature[]> = {
   'image/jpeg': [[0xff, 0xd8, 0xff]],
   'image/png': [[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
@@ -62,27 +71,55 @@ export const MAGIC_BYTES_SIGNATURES: Record<string, MagicBytesSignature[]> = {
   'font/otf': [[0x4f, 0x54, 0x54, 0x4f]],
 };
 
+/**
+ * Returns a list of all MIME types that have magic bytes signatures.
+ * @returns Array of supported MIME type strings
+ */
 export function getSupportedMimeTypes(): string[] {
   return Object.keys(MAGIC_BYTES_SIGNATURES);
 }
 
+/**
+ * Gets all magic bytes signatures for a specific MIME type.
+ * @param mimeType - MIME type to look up
+ * @returns Array of signatures for the MIME type, or empty array if not found
+ */
 export function getSignaturesForMimeType(mimeType: string): MagicBytesSignature[] {
   return MAGIC_BYTES_SIGNATURES[mimeType] ?? [];
 }
 
+/**
+ * Checks if a MIME type has any registered magic bytes signatures.
+ * @param mimeType - MIME type to check
+ * @returns true if signatures exist for this MIME type
+ */
 export function hasMagicBytesSignature(mimeType: string): boolean {
   return mimeType in MAGIC_BYTES_SIGNATURES;
 }
 
+/**
+ * Adds a new magic bytes signature for a MIME type.
+ * Creates a new entry if the MIME type doesn't exist.
+ * @param mimeType - MIME type to add signature for
+ * @param signature - Magic bytes signature to add
+ */
 export function addMagicBytesSignature(mimeType: string, signature: MagicBytesSignature): void {
   if (!MAGIC_BYTES_SIGNATURES[mimeType]) MAGIC_BYTES_SIGNATURES[mimeType] = [];
   MAGIC_BYTES_SIGNATURES[mimeType].push(signature);
 }
 
+/**
+ * Removes all magic bytes signatures for a MIME type.
+ * @param mimeType - MIME type to remove signatures for
+ */
 export function removeMagicBytesSignatures(mimeType: string): void {
   if (MAGIC_BYTES_SIGNATURES[mimeType]) delete MAGIC_BYTES_SIGNATURES[mimeType];
 }
 
+/**
+ * Calculates the maximum length among all registered magic bytes signatures.
+ * @returns Maximum signature length in bytes
+ */
 export function getMaxSignatureLength(): number {
   let max = 0;
   for (const sigs of Object.values(MAGIC_BYTES_SIGNATURES)) {
