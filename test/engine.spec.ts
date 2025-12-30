@@ -14,6 +14,11 @@ import {
   koaBufferAnalysisMiddleware,
   setBufferAnalysisEnabled,
   isBufferAnalysisEnabled,
+  analyzeSuspiciousPatterns,
+  getAllSuspiciousPatternNames,
+  getSuspiciousPatternCount,
+  getPatternsByCategory,
+  SUSPICIOUS_PATTERNS,
 } from '../src';
 
 describe('BufferAnalysisEngine basic behavior', () => {
@@ -114,6 +119,302 @@ describe('BufferAnalysisEngine basic behavior', () => {
     const result = engine.analyzeBuffer(buf, 'test.sql');
     expect(result.hasSuspiciousPatterns).toBe(true);
     expect(result.suspiciousPatterns).toContain('SQL Union');
+  });
+
+  // Extended pattern tests
+  it('detects HTML script close tag', () => {
+    const buf = Buffer.from('</script>');
+    const result = engine.analyzeBuffer(buf, 'test.html');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('HTML Script Close Tag');
+  });
+
+  it('detects HTML iframe tag', () => {
+    const buf = Buffer.from('<iframe src="evil.com">');
+    const result = engine.analyzeBuffer(buf, 'test.html');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('HTML Iframe Tag');
+  });
+
+  it('detects HTML onload event', () => {
+    const buf = Buffer.from('<img onload="alert(1)">');
+    const result = engine.analyzeBuffer(buf, 'test.html');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('HTML Onload Event');
+  });
+
+  it('detects JavaScript cookie access', () => {
+    const buf = Buffer.from('document.cookie="session=123"');
+    const result = engine.analyzeBuffer(buf, 'test.js');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('JavaScript Cookie Access');
+  });
+
+  it('detects JavaScript confirm', () => {
+    const buf = Buffer.from('confirm("Are you sure?")');
+    const result = engine.analyzeBuffer(buf, 'test.js');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('JavaScript Confirm');
+  });
+
+  it('detects JavaScript Function constructor', () => {
+    const buf = Buffer.from('new Function("alert(1)")');
+    const result = engine.analyzeBuffer(buf, 'test.js');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('JavaScript Function Constructor');
+  });
+
+  it('detects Node.js child process', () => {
+    const buf = Buffer.from("require('child_process').exec");
+    const result = engine.analyzeBuffer(buf, 'test.js');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('Node.js Child Process');
+  });
+
+  it('detects shell exec command', () => {
+    const buf = Buffer.from('shell_exec("ls -la")');
+    const result = engine.analyzeBuffer(buf, 'test.php');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('Shell Exec Command');
+  });
+
+  it('detects PowerShell', () => {
+    const buf = Buffer.from('powershell -c "Get-Process"');
+    const result = engine.analyzeBuffer(buf, 'test.ps1');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('PowerShell');
+  });
+
+  it('detects SQL DROP DATABASE', () => {
+    const buf = Buffer.from('DROP DATABASE test');
+    const result = engine.analyzeBuffer(buf, 'test.sql');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('SQL Drop Database');
+  });
+
+  it('detects SQL TRUNCATE TABLE', () => {
+    const buf = Buffer.from('TRUNCATE TABLE users');
+    const result = engine.analyzeBuffer(buf, 'test.sql');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('SQL Truncate Table');
+  });
+
+  it('detects SQL SELECT ALL', () => {
+    const buf = Buffer.from('SELECT * FROM users');
+    const result = engine.analyzeBuffer(buf, 'test.sql');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('SQL Select All');
+  });
+
+  it('detects SQL comment', () => {
+    const buf = Buffer.from('SELECT * FROM users -- comment');
+    const result = engine.analyzeBuffer(buf, 'test.sql');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('SQL Comment');
+  });
+
+  it('detects SQL OR injection', () => {
+    const buf = Buffer.from('OR 1=1 --');
+    const result = engine.analyzeBuffer(buf, 'test.sql');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('SQL OR Injection');
+  });
+
+  it('detects PHP open tag', () => {
+    const buf = Buffer.from('<?php echo "hello"; ?>');
+    const result = engine.analyzeBuffer(buf, 'test.php');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('PHP Open Tag');
+  });
+
+  it('detects PHP include', () => {
+    const buf = Buffer.from('include("config.php")');
+    const result = engine.analyzeBuffer(buf, 'test.php');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('PHP Include');
+  });
+
+  it('detects Python subprocess', () => {
+    const buf = Buffer.from('import subprocess; subprocess.call(["ls"])');
+    const result = engine.analyzeBuffer(buf, 'test.py');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('Python Subprocess');
+  });
+
+  it('detects base64 encoding', () => {
+    const buf = Buffer.from('base64_decode("SGVsbG8=")');
+    const result = engine.analyzeBuffer(buf, 'test.php');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('Base64 Encoding');
+  });
+
+  it('detects command separator', () => {
+    const buf = Buffer.from('ls; rm -rf /');
+    const result = engine.analyzeBuffer(buf, 'test.sh');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('Command Separator');
+  });
+
+  it('detects pipe operator', () => {
+    const buf = Buffer.from('cat file.txt | grep "pattern"');
+    const result = engine.analyzeBuffer(buf, 'test.sh');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('Pipe Operator');
+  });
+
+  it('detects Unix passwd file', () => {
+    const buf = Buffer.from('/etc/passwd');
+    const result = engine.analyzeBuffer(buf, 'test.txt');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('Unix Passwd File');
+  });
+
+  it('detects directory traversal', () => {
+    const buf = Buffer.from('../../../etc/passwd');
+    const result = engine.analyzeBuffer(buf, 'test.txt');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('Directory Traversal');
+  });
+
+  // Edge case tests
+  it('handles empty buffer', () => {
+    const buf = Buffer.alloc(0);
+    const result = engine.analyzeBuffer(buf, 'empty.txt');
+    expect(result.hasSuspiciousPatterns).toBe(false);
+    expect(result.suspiciousPatterns).toEqual([]);
+    expect(result.confidence).toBe(0); // Small buffer penalty
+  });
+
+  it('handles buffer with only null bytes', () => {
+    const buf = Buffer.alloc(100, 0);
+    const result = engine.analyzeBuffer(buf, 'nulls.bin');
+    expect(result.hasSuspiciousPatterns).toBe(false);
+    expect(result.detectedMimeType).toBe(null);
+  });
+
+  it('handles very large buffer without patterns', () => {
+    const buf = Buffer.alloc(1024 * 1024, 0x41); // 1MB of 'A's
+    const result = engine.analyzeBuffer(buf, 'large.txt');
+    expect(result.hasSuspiciousPatterns).toBe(false);
+    expect(result.analysisSkipped).toBe(false);
+  });
+
+  it('handles buffer with unicode characters', () => {
+    const buf = Buffer.from('🚀 Hello 世界 🌍 <script>alert("test")</script>', 'utf8');
+    const result = engine.analyzeBuffer(buf, 'unicode.txt');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('HTML Script Tag');
+  });
+
+  it('handles case insensitive pattern matching', () => {
+    // Note: Pattern matching is case-sensitive for security reasons
+    const buf = Buffer.from('DROP table users');
+    const result = engine.analyzeBuffer(buf, 'test.sql');
+    expect(result.hasSuspiciousPatterns).toBe(false); // Case-sensitive matching
+  });
+
+  it('handles patterns with whitespace', () => {
+    // Note: Pattern matching requires exact byte sequence
+    const buf = Buffer.from('DROP   TABLE    users');
+    const result = engine.analyzeBuffer(buf, 'test.sql');
+    expect(result.hasSuspiciousPatterns).toBe(false); // Exact matching, no whitespace tolerance
+  });
+
+  it('does not detect partial matches', () => {
+    const buf = Buffer.from('DROP_TABLE'); // underscore instead of space
+    const result = engine.analyzeBuffer(buf, 'test.txt');
+    expect(result.hasSuspiciousPatterns).toBe(false);
+  });
+
+  it('handles multiple overlapping patterns', () => {
+    const buf = Buffer.from('<script>eval("alert(1)")</script>');
+    const result = engine.analyzeBuffer(buf, 'test.html');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns.length).toBeGreaterThan(1);
+    expect(result.suspiciousPatterns).toContain('HTML Script Tag');
+    expect(result.suspiciousPatterns).toContain('JavaScript Eval');
+  });
+
+  it('handles binary data with embedded patterns', () => {
+    const binaryData = Buffer.from([0x00, 0x01, 0x02]);
+    const scriptData = Buffer.from('<script>');
+    const buf = Buffer.concat([binaryData, scriptData]);
+    const result = engine.analyzeBuffer(buf, 'binary.dat');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('HTML Script Tag');
+  });
+
+  it('handles patterns at buffer boundaries', () => {
+    const buf = Buffer.from('<script>alert(1)</script>');
+    const result = engine.analyzeBuffer(buf, 'test.html');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('HTML Script Tag');
+  });
+
+  it('handles patterns split across buffer chunks', () => {
+    // This tests the limitation - patterns split across chunks won't be detected
+    const chunk1 = Buffer.from('<scrip');
+    const chunk2 = Buffer.from('t>alert(1)</script>');
+    const buf = Buffer.concat([chunk1, chunk2]);
+    const result = engine.analyzeBuffer(buf, 'test.html');
+    // The pattern '<script' should still be detected in chunk1
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('HTML Script Tag');
+  });
+
+  it('handles URL-encoded malicious content', () => {
+    const buf = Buffer.from('%3Cscript%3Ealert%281%29%3C%2Fscript%3E');
+    const result = engine.analyzeBuffer(buf, 'test.txt');
+    // URL encoding should not hide the script tag pattern
+    expect(result.hasSuspiciousPatterns).toBe(false); // %3C is not '<'
+  });
+
+  it('handles base64 encoded content', () => {
+    const maliciousJs = Buffer.from('<script>alert(1)</script>');
+    const base64Encoded = maliciousJs.toString('base64');
+    const buf = Buffer.from(base64Encoded);
+    const result = engine.analyzeBuffer(buf, 'test.b64');
+    // Base64 encoded content should not match text patterns
+    expect(result.hasSuspiciousPatterns).toBe(false);
+  });
+
+  it('handles mixed encoding scenarios', () => {
+    const buf = Buffer.from('data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==');
+    const result = engine.analyzeBuffer(buf, 'test.txt');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('Data URL HTML');
+  });
+
+  it('handles extremely long patterns', () => {
+    const longPattern = 'A'.repeat(1000) + '<script>alert(1)</script>';
+    const buf = Buffer.from(longPattern);
+    const result = engine.analyzeBuffer(buf, 'long.txt');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    expect(result.suspiciousPatterns).toContain('HTML Script Tag');
+  });
+
+  it('respects analysis depth limit for patterns', () => {
+    const engine = new BufferAnalysisEngine({ maxAnalysisDepth: 50 });
+    const buf = Buffer.concat([
+      Buffer.alloc(60, 0x41), // Fill up to analysis depth
+      Buffer.from('<script>alert(1)</script>'), // This should not be analyzed
+    ]);
+    const result = engine.analyzeBuffer(buf, 'test.dat');
+    expect(result.hasSuspiciousPatterns).toBe(false);
+  });
+
+  it('handles concurrent pattern detection', () => {
+    const patterns = [
+      '<script>alert(1)</script>',
+      'eval("code")',
+      'DROP TABLE users',
+      'system("rm -rf")',
+    ];
+    const buf = Buffer.from(patterns.join('\n'));
+    const result = engine.analyzeBuffer(buf, 'malicious.txt');
+    expect(result.hasSuspiciousPatterns).toBe(true);
+    // Multiple patterns may match within each line due to overlapping signatures
+    expect(result.suspiciousPatterns.length).toBeGreaterThanOrEqual(4);
   });
 
   it('handles multiple suspicious patterns', () => {
@@ -744,5 +1045,125 @@ describe('BufferAnalysisEngine basic behavior', () => {
 
     await middleware(req, {}, next);
     expect(error).toBeInstanceOf(Error);
+  });
+});
+
+describe('Suspicious Patterns Module', () => {
+  it('should have non-empty suspicious patterns array', () => {
+    expect(SUSPICIOUS_PATTERNS).toBeDefined();
+    expect(Array.isArray(SUSPICIOUS_PATTERNS)).toBe(true);
+    expect(SUSPICIOUS_PATTERNS.length).toBeGreaterThan(0);
+  });
+
+  it('should have valid pattern structure', () => {
+    for (const pattern of SUSPICIOUS_PATTERNS) {
+      expect(pattern).toHaveProperty('pattern');
+      expect(pattern).toHaveProperty('name');
+      expect(Buffer.isBuffer(pattern.pattern)).toBe(true);
+      expect(typeof pattern.name).toBe('string');
+      expect(pattern.name.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('should detect suspicious patterns correctly', () => {
+    const testBuffer = Buffer.from('<script>alert(1)</script>');
+    const result = analyzeSuspiciousPatterns(testBuffer);
+    expect(result.hasSuspicious).toBe(true);
+    expect(result.patterns).toContain('HTML Script Tag');
+    expect(result.patterns).toContain('HTML Script Close Tag');
+  });
+
+  it('should return empty result for clean buffer', () => {
+    const cleanBuffer = Buffer.from('Hello World');
+    const result = analyzeSuspiciousPatterns(cleanBuffer);
+    expect(result.hasSuspicious).toBe(false);
+    expect(result.patterns).toEqual([]);
+  });
+
+  it('should respect maxAnalysisDepth parameter', () => {
+    const buffer = Buffer.concat([
+      Buffer.alloc(50, 0x41), // Fill first 50 bytes
+      Buffer.from('<script>alert(1)</script>'), // Add pattern after
+    ]);
+    const result = analyzeSuspiciousPatterns(buffer, 40); // Only analyze first 40 bytes
+    expect(result.hasSuspicious).toBe(false); // Should not find pattern beyond depth
+  });
+
+  it('should get all suspicious pattern names', () => {
+    const names = getAllSuspiciousPatternNames();
+    expect(Array.isArray(names)).toBe(true);
+    expect(names.length).toBe(SUSPICIOUS_PATTERNS.length);
+    expect(names).toContain('HTML Script Tag');
+    expect(names).toContain('SQL Drop Command');
+  });
+
+  it('should get suspicious pattern count', () => {
+    const count = getSuspiciousPatternCount();
+    expect(typeof count).toBe('number');
+    expect(count).toBe(SUSPICIOUS_PATTERNS.length);
+    expect(count).toBeGreaterThan(50); // Should have many patterns
+  });
+
+  it('should filter patterns by category', () => {
+    const htmlPatterns = getPatternsByCategory('HTML');
+    expect(Array.isArray(htmlPatterns)).toBe(true);
+    expect(htmlPatterns.length).toBeGreaterThan(0);
+
+    // Check that all returned patterns start with 'HTML'
+    for (const pattern of htmlPatterns) {
+      expect(pattern.name.startsWith('HTML')).toBe(true);
+    }
+
+    const sqlPatterns = getPatternsByCategory('SQL');
+    expect(Array.isArray(sqlPatterns)).toBe(true);
+    expect(sqlPatterns.length).toBeGreaterThan(0);
+
+    // Check that all returned patterns start with 'SQL'
+    for (const pattern of sqlPatterns) {
+      expect(pattern.name.startsWith('SQL')).toBe(true);
+    }
+  });
+
+  it('should handle case-insensitive category filtering', () => {
+    const htmlPatterns1 = getPatternsByCategory('html');
+    const htmlPatterns2 = getPatternsByCategory('HTML');
+    expect(htmlPatterns1.length).toBe(htmlPatterns2.length);
+  });
+
+  it('should return empty array for non-existent category', () => {
+    const nonExistent = getPatternsByCategory('NonExistentCategory');
+    expect(nonExistent).toEqual([]);
+  });
+
+  it('should detect multiple pattern types simultaneously', () => {
+    const buffer = Buffer.from(`
+      <script>alert('xss')</script>
+      DROP TABLE users;
+      eval('code');
+      /etc/passwd
+    `);
+
+    const result = analyzeSuspiciousPatterns(buffer);
+    expect(result.hasSuspicious).toBe(true);
+    expect(result.patterns.length).toBeGreaterThan(3);
+    expect(result.patterns).toContain('HTML Script Tag');
+    expect(result.patterns).toContain('SQL Drop Command');
+    expect(result.patterns).toContain('JavaScript Eval');
+    expect(result.patterns).toContain('Unix Passwd File');
+  });
+
+  it('should handle empty buffer', () => {
+    const result = analyzeSuspiciousPatterns(Buffer.alloc(0));
+    expect(result.hasSuspicious).toBe(false);
+    expect(result.patterns).toEqual([]);
+  });
+
+  it('should handle binary data', () => {
+    const binaryBuffer = Buffer.from([
+      0x00, 0x01, 0x02, 0x3c, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74, 0x3e,
+    ]); // Contains '<script>'
+    const result = analyzeSuspiciousPatterns(binaryBuffer);
+    expect(result.hasSuspicious).toBe(true);
+    expect(result.patterns).toContain('HTML Script Tag');
   });
 });

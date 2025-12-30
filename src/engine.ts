@@ -1,5 +1,6 @@
 import { BufferAnalysisConfig, BufferAnalysisResult } from './types';
 import { MAGIC_BYTES_SIGNATURES } from './magic-bytes';
+import { analyzeSuspiciousPatterns } from './suspicious-patterns';
 import { safeObjectAssign, SimpleLogger, silentLogger } from './utils';
 
 /**
@@ -412,27 +413,7 @@ export class BufferAnalysisEngine {
     const analysisDepth = Math.min(buffer.length, this.config.maxAnalysisDepth);
     const analysisBuffer = buffer.subarray(0, analysisDepth);
 
-    const suspiciousPatterns = [
-      { pattern: Buffer.from('<script', 'utf8'), name: 'HTML Script Tag' },
-      { pattern: Buffer.from('javascript:', 'utf8'), name: 'JavaScript Protocol' },
-      { pattern: Buffer.from('vbscript:', 'utf8'), name: 'VBScript Protocol' },
-      { pattern: Buffer.from('/JavaScript', 'utf8'), name: 'PDF JavaScript' },
-      { pattern: Buffer.from('alert(', 'utf8'), name: 'JavaScript Alert' },
-      { pattern: Buffer.from('eval(', 'utf8'), name: 'JavaScript Eval' },
-      { pattern: Buffer.from('exec(', 'utf8'), name: 'Execution Command' },
-      { pattern: Buffer.from('system(', 'utf8'), name: 'System Command' },
-      { pattern: Buffer.from('#!/bin/', 'utf8'), name: 'Shell Shebang' },
-      { pattern: Buffer.from('cmd.exe', 'utf8'), name: 'Windows Command' },
-      { pattern: Buffer.from('DROP TABLE', 'utf8'), name: 'SQL Drop Command' },
-      { pattern: Buffer.from('UNION SELECT', 'utf8'), name: 'SQL Union' },
-    ];
-
-    const foundPatterns: string[] = [];
-    for (const { pattern, name } of suspiciousPatterns) {
-      if (analysisBuffer.includes(pattern)) foundPatterns.push(name);
-    }
-
-    return { hasSuspicious: foundPatterns.length > 0, patterns: foundPatterns };
+    return analyzeSuspiciousPatterns(analysisBuffer);
   }
 
   /**
@@ -448,6 +429,8 @@ export class BufferAnalysisEngine {
     if (!result.detectedMimeType) confidence -= 20;
     if (result.hasSuspiciousPatterns) confidence -= result.suspiciousPatterns.length * 10;
     if (buffer.length < 100) confidence -= 15;
+    // Special case: empty buffer should have 0 confidence
+    if (buffer.length === 0) confidence = 0;
     return Math.max(0, Math.min(100, confidence));
   }
 

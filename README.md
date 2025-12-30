@@ -37,6 +37,8 @@ import {
   getBufferAnalysisEngine,
   resetBufferAnalysisEngine,
   MAGIC_BYTES_SIGNATURES,
+  analyzeSuspiciousPatterns,
+  getPatternsByCategory,
 } from 'buffer-analysis-engine';
 
 const engine = new BufferAnalysisEngine();
@@ -48,6 +50,16 @@ console.log(result.detectedMimeType); // "image/jpeg"
 
 // convenience: per-call config uses a temporary engine and thus respects the supplied options
 const oneOff = analyzeBuffer(buf, 'photo.jpg', { enableMagicBytesDetection: true });
+
+// direct suspicious pattern analysis
+const maliciousBuf = Buffer.from('<script>alert(1)</script>');
+const patternResult = analyzeSuspiciousPatterns(maliciousBuf);
+console.log(patternResult.hasSuspicious); // true
+console.log(patternResult.patterns); // ['HTML Script Tag', 'HTML Script Close Tag']
+
+// get patterns by category
+const sqlPatterns = getPatternsByCategory('SQL');
+console.log(sqlPatterns.length); // number of SQL-related patterns
 
 // reset the global instance (useful in tests or to reconfigure)
 resetBufferAnalysisEngine();
@@ -76,12 +88,68 @@ console.log(Object.keys(MAGIC_BYTES_SIGNATURES));
 - MAGIC_BYTES_SIGNATURES — exported map of mime types -> magic byte signatures
 - addMagicBytesSignature(mimeType, signature) — add a magic signature at runtime
 - removeMagicBytesSignatures(mimeType) — remove all signatures for a mime type
+
+- SUSPICIOUS_PATTERNS — exported array of suspicious pattern definitions
+- analyzeSuspiciousPatterns(buffer, maxAnalysisDepth?) — analyze buffer for security threats
+- getAllSuspiciousPatternNames() — get all pattern names
+- getSuspiciousPatternCount() — get total number of patterns
+- getPatternsByCategory(category) — filter patterns by category (e.g., 'HTML', 'SQL')
+
 - analyzeStream(readable, filename?, config?) — analyze a Readable or async iterable stream (returns a Promise<BufferAnalysisResult>)
 - expressBufferAnalysisMiddleware(opts) / koaBufferAnalysisMiddleware(opts) — middleware factories for Express and Koa to attach analysis results to requests
 
 ---
 
-## Streaming Analysis
+## Suspicious Pattern Analysis
+
+The engine includes a comprehensive set of patterns to detect various security threats including XSS, SQL injection, command injection, and other malicious content.
+
+### Direct Pattern Analysis
+
+```ts
+import { analyzeSuspiciousPatterns, getPatternsByCategory } from 'buffer-analysis-engine';
+
+// Analyze a buffer for suspicious patterns
+const buffer = Buffer.from('<script>alert("XSS")</script> DROP TABLE users');
+const result = analyzeSuspiciousPatterns(buffer);
+
+console.log(result.hasSuspicious); // true
+console.log(result.patterns); // ['HTML Script Tag', 'SQL Drop Command', ...]
+
+// Get patterns by category
+const htmlPatterns = getPatternsByCategory('HTML');
+const sqlPatterns = getPatternsByCategory('SQL');
+const jsPatterns = getPatternsByCategory('JavaScript');
+
+// Get all pattern names
+import { getAllSuspiciousPatternNames } from 'buffer-analysis-engine';
+const allNames = getAllSuspiciousPatternNames();
+console.log(`Total patterns: ${allNames.length}`);
+```
+
+### Pattern Categories
+
+The suspicious patterns are organized into categories:
+
+- **HTML/XSS**: Script tags, event handlers, iframe/object/embed tags
+- **JavaScript**: Eval, alert, confirm, Function constructor, localStorage access
+- **SQL Injection**: DROP/TRUNCATE/UNION/SELECT statements, comments, tautologies
+- **Command Injection**: Exec, system, shell commands, command operators
+- **PHP**: Include/require, eval, create_function
+- **Python**: Exec, eval, subprocess, import calls
+- **File System**: Path traversal, passwd/shadow files
+- **Encoding**: Base64, URL encoding functions
+
+### Custom Pattern Analysis
+
+You can also analyze patterns with depth limits:
+
+```ts
+// Only analyze first 1KB of a large buffer
+const result = analyzeSuspiciousPatterns(largeBuffer, 1024);
+```
+
+---
 
 You can analyze Readable streams (or async iterables of Buffer chunks) without buffering the entire file into memory. The convenience function `analyzeStream(readable, filename?, config?)` returns a promise resolving to `BufferAnalysisResult`.
 
