@@ -109,12 +109,17 @@ The engine includes a comprehensive set of patterns to detect various security t
 ```ts
 import { analyzeSuspiciousPatterns, getPatternsByCategory } from 'buffer-analysis-engine';
 
-// Analyze a buffer for suspicious patterns
+// Analyze a buffer for suspicious patterns with context
 const buffer = Buffer.from('<script>alert("XSS")</script> DROP TABLE users');
-const result = analyzeSuspiciousPatterns(buffer);
+const mimeType = 'text/html'; // Optional: filters inapplicable patterns
+const maxDepth = 1024;
+const threshold = 1;
+
+const result = analyzeSuspiciousPatterns(buffer, mimeType, maxDepth, threshold);
 
 console.log(result.hasSuspicious); // true
 console.log(result.patterns); // ['HTML Script Tag', 'SQL Drop Command', ...]
+console.log(result.score); // Total risk score (e.g., 5)
 
 // Get patterns by category
 const htmlPatterns = getPatternsByCategory('HTML');
@@ -142,14 +147,14 @@ The suspicious patterns are organized into categories:
 
 ### Custom Pattern Analysis
 
-You can also analyze patterns with depth limits:
-
 ```ts
-// Only analyze first 1KB of a large buffer
-const result = analyzeSuspiciousPatterns(largeBuffer, 1024);
+// Only analyze first 1KB of a large buffer, with threshold 3
+const result = analyzeSuspiciousPatterns(largeBuffer, 'text/plain', 1024, 3);
 ```
 
 ---
+
+## Stream Analysis
 
 You can analyze Readable streams (or async iterables of Buffer chunks) without buffering the entire file into memory. The convenience function `analyzeStream(readable, filename?, config?)` returns a promise resolving to `BufferAnalysisResult`.
 
@@ -165,8 +170,8 @@ const res = await analyzeStream(r, 'photo.jpg');
 
 Notes:
 
-- For suspicious-pattern analysis the implementation buffers up to `maxAnalysisDepth` bytes (default 1 MiB).
-- For magic-bytes detection the stream reader stops early as soon as it has the number of bytes required to match known signatures.
+- For suspicious-pattern analysis, the implementation buffers up to `maxAnalysisDepth` bytes (default 1 MiB).
+- For magic-bytes detection, the stream reader continues reading until the required buffer depth is met, ensuring accurate detection even for patterns deeper in the file (if configured).
 
 ---
 
@@ -214,6 +219,30 @@ addMagicBytesSignature('application/x-custom', [0x01, 0x02, 0x03]);
 | maxAnalysisDepth                |  number | 1 MiB   | Max bytes to scan for patterns                       |
 | skipLargeFiles                  | boolean | true    | If true, files larger than `maxFileSize` are skipped |
 | maxFileSize                     |  number | 50 MiB  | Threshold for skipping large files                   |
+| suspiciousThreshold             |  number | 1       | Minimum score to flag as suspicious                  |
+| mimeTypeSpecificConfig          |  object | {}      | Per-MIME type configuration overrides                |
+
+### Advanced Configuration
+
+The engine supports granular configuration for different file types and security requirements.
+
+**Suspicious Thresholds**:
+Patterns have assigned weights (e.g., `alert()` = 1, `DROP TABLE` = 3). Content is flagged only if the total score meets or exceeds `suspiciousThreshold`.
+
+**MIME-Type Overrides**:
+You can apply stricter or looser rules for specific file types using `mimeTypeSpecificConfig`:
+
+```ts
+const engine = new BufferAnalysisEngine({
+  suspiciousThreshold: 1, // Default strict
+  mimeTypeSpecificConfig: {
+    'text/javascript': {
+      suspiciousThreshold: 5, // Allow some patterns in JS files
+      maxAnalysisDepth: 5 * 1024 * 1024, // Scan deeper in JS
+    },
+  },
+});
+```
 
 ---
 

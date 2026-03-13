@@ -13,6 +13,8 @@ const DEFAULT_BUFFER_ANALYSIS_CONFIG: Required<BufferAnalysisConfig> = {
   maxAnalysisDepth: 1024 * 1024,
   skipLargeFiles: true,
   maxFileSize: 50 * 1024 * 1024,
+  suspiciousThreshold: 1,
+  mimeTypeSpecificConfig: {},
 };
 
 /**
@@ -27,6 +29,9 @@ function validateConfig(config: Partial<BufferAnalysisConfig>): void {
   }
   if (config.maxFileSize !== undefined && config.maxFileSize < 0) {
     throw new Error('maxFileSize must be non-negative');
+  }
+  if (config.suspiciousThreshold !== undefined && config.suspiciousThreshold < 0) {
+    throw new Error('suspiciousThreshold must be non-negative');
   }
   // Note: maxAnalysisDepth can be larger than maxFileSize as it controls analysis depth, not file size limit
 }
@@ -149,13 +154,22 @@ export class BufferAnalysisEngine {
 
     try {
       if (this.config.enableMagicBytesDetection) {
-        result.detectedMimeType = this.detectMimeTypeFromBuffer(buffer);
+        result.detectedMimeType = this.detectMimeTypeFromBuffer(buffer, filename);
       }
 
-      if (this.config.enableSuspiciousPatternAnalysis) {
-        const { hasSuspicious, patterns } = this.analyzeSuspiciousPatterns(buffer);
+      const effectiveConfig = this.getEffectiveConfig(result.detectedMimeType);
+
+      if (effectiveConfig.enableSuspiciousPatternAnalysis) {
+        const threshold = effectiveConfig.suspiciousThreshold ?? 1;
+        const { hasSuspicious, patterns, score } = this.analyzeSuspiciousPatterns(
+          buffer,
+          result.detectedMimeType || undefined,
+          effectiveConfig.maxAnalysisDepth,
+          threshold,
+        );
         result.hasSuspiciousPatterns = hasSuspicious;
         result.suspiciousPatterns = patterns;
+        result.suspiciousScore = score;
       }
 
       result.confidence = this.calculateConfidence(buffer, result);
@@ -186,7 +200,8 @@ export class BufferAnalysisEngine {
    * @returns Detected MIME type or null if not recognized
    * @private
    */
-  private detectMimeTypeFromBuffer(buffer: Buffer): string | null {
+  private detectMimeTypeFromBuffer(buffer: Buffer, filename?: string): string | null {
+    // First, try magic bytes detection
     for (const [mimeType, signatures] of Object.entries(MAGIC_BYTES_SIGNATURES)) {
       for (const signature of signatures) {
         if (this.matchesMagicBytes(buffer, signature)) {
@@ -194,6 +209,34 @@ export class BufferAnalysisEngine {
         }
       }
     }
+    // If no magic bytes match, try filename extension
+    if (filename) {
+      return this.detectMimeTypeFromFilename(filename);
+    }
+    return null;
+  }
+
+  /**
+   * Detects MIME type from filename extension.
+   * @param filename - The filename to analyze
+   * @returns Detected MIME type or null if unknown
+   * @private
+   */
+  private detectMimeTypeFromFilename(filename: string): string | null {
+    const ext = filename.split('.').pop()?.toLowerCase();
+    if (ext === 'html' || ext === 'htm') return 'text/html';
+    if (ext === 'js') return 'text/javascript';
+    if (ext === 'php') return 'text/x-php';
+    if (ext === 'sql') return 'application/sql';
+    if (ext === 'sh') return 'text/x-shellscript';
+    if (ext === 'bat') return 'text/x-batch';
+    if (ext === 'pdf') return 'application/pdf';
+    if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+    if (ext === 'png') return 'image/png';
+    if (ext === 'gif') return 'image/gif';
+    if (ext === 'webp') return 'image/webp';
+    if (ext === 'txt') return 'text/plain';
+    // Add more as needed
     return null;
   }
 
@@ -253,10 +296,14 @@ export class BufferAnalysisEngine {
 
     // Pull bytes from stream up to either maxAnalysisDepth or until we have enough for magic detection
     const maxSigLen = this.getMaxSignatureLength();
-    const analysisDepth = Math.min(
-      this.config.maxAnalysisDepth,
-      maxSigLen || this.config.maxAnalysisDepth,
-    );
+    let analysisDepth = this.config.maxAnalysisDepth;
+    if (
+      this.config.enableMagicBytesDetection &&
+      !this.config.enableSuspiciousPatternAnalysis &&
+      maxSigLen > 0
+    ) {
+      analysisDepth = Math.min(analysisDepth, maxSigLen);
+    }
 
     const chunks: Buffer[] = [];
     let totalLength = 0;
@@ -328,11 +375,21 @@ export class BufferAnalysisEngine {
     };
 
     if (this.config.enableMagicBytesDetection)
-      result.detectedMimeType = this.detectMimeTypeFromBuffer(analysisBuffer);
-    if (this.config.enableSuspiciousPatternAnalysis) {
-      const { hasSuspicious, patterns } = this.analyzeSuspiciousPatterns(analysisBuffer);
+      result.detectedMimeType = this.detectMimeTypeFromBuffer(analysisBuffer, filename);
+
+    const effectiveConfig = this.getEffectiveConfig(result.detectedMimeType);
+
+    if (effectiveConfig.enableSuspiciousPatternAnalysis) {
+      const threshold = effectiveConfig.suspiciousThreshold ?? 1;
+      const { hasSuspicious, patterns, score } = this.analyzeSuspiciousPatterns(
+        analysisBuffer,
+        result.detectedMimeType ?? undefined,
+        effectiveConfig.maxAnalysisDepth,
+        threshold,
+      );
       result.hasSuspiciousPatterns = hasSuspicious;
       result.suspiciousPatterns = patterns;
+      result.suspiciousScore = score;
     }
 
     result.confidence = this.calculateConfidence(analysisBuffer, result);
@@ -403,17 +460,28 @@ export class BufferAnalysisEngine {
   /**
    * Analyzes buffer for suspicious patterns such as script tags, eval calls, SQL injection attempts, etc.
    * @param buffer - Buffer to analyze
+   * @param mimeType - Optional MIME type for context-aware filtering
+   * @param maxAnalysisDepth - Maximum number of bytes to analyze (optional)
+   * @param threshold - Threshold for suspicious score (optional, default 1)
    * @returns Object containing whether suspicious patterns were found and list of pattern names
    * @private
    */
-  private analyzeSuspiciousPatterns(buffer: Buffer): {
+  private analyzeSuspiciousPatterns(
+    buffer: Buffer,
+    mimeType?: string,
+    maxAnalysisDepth?: number,
+    threshold: number = 1,
+  ): {
     hasSuspicious: boolean;
     patterns: string[];
+    score: number;
   } {
-    const analysisDepth = Math.min(buffer.length, this.config.maxAnalysisDepth);
-    const analysisBuffer = buffer.subarray(0, analysisDepth);
-
-    return analyzeSuspiciousPatterns(analysisBuffer);
+    return analyzeSuspiciousPatterns(
+      buffer,
+      mimeType,
+      maxAnalysisDepth ?? this.config.maxAnalysisDepth,
+      threshold,
+    );
   }
 
   /**
@@ -432,6 +500,19 @@ export class BufferAnalysisEngine {
     // Special case: empty buffer should have 0 confidence
     if (buffer.length === 0) confidence = 0;
     return Math.max(0, Math.min(100, confidence));
+  }
+
+  /**
+   * Gets effective configuration for a specific MIME type.
+   * @param mimeType - The detected MIME type
+   * @returns Effective configuration object
+   * @private
+   */
+  private getEffectiveConfig(mimeType?: string | null): BufferAnalysisConfig {
+    if (!mimeType || !this.config.mimeTypeSpecificConfig?.[mimeType]) {
+      return this.config;
+    }
+    return { ...this.config, ...this.config.mimeTypeSpecificConfig[mimeType] };
   }
 
   /**
